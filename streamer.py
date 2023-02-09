@@ -4,6 +4,7 @@ from lossy_socket import LossyUDP
 from socket import INADDR_ANY
 from struct import *
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 class Streamer:
     def __init__(self, dst_ip, dst_port,
                  src_ip=INADDR_ANY, src_port=0):
@@ -16,6 +17,9 @@ class Streamer:
         self.buffer = OrderedDict()
         self.sequence_num_sent = 0
         self.curr_packet_recv = 0
+        self.closed = False
+        executor = ThreadPoolExecutor(max_workers=1)
+        executor.submit(self.listener)
     def send(self, data_bytes: bytes) -> None:
         """Note that data_bytes can be larger than one packet."""
         # Your code goes here!  The code below should be changed!
@@ -31,13 +35,27 @@ class Streamer:
             packet = pack(f'i1440s', self.sequence_num_sent, data_bytes[int(num_packets)*1440::])
             self.sequence_num_sent += 1
             self.socket.sendto(packet, (self.dst_ip, self.dst_port))
-        
+    def listener(self):
+        while not self.closed: # a later hint will explain self.closed
+            try:
+                data, addr = self.socket.recvfrom()
+                header, data = unpack('i1440s', data)
+                self.buffer[str(header)] = data.split(b'\x00')[0]
+                # store the data in the receive buffer
+                # ...
+            except Exception as e:
+                print("listener died!")
+                print(e)
     def recv(self) -> bytes:
         """Blocks (waits) if no data is ready to be read from the connection."""
+        """
         while str(self.curr_packet_recv) not in self.buffer.keys():
             data, addr = self.socket.recvfrom()
             header, data = unpack('i1440s', data)
             self.buffer[str(header)] = data.split(b'\x00')[0]
+        """
+        while str(self.curr_packet_recv) not in self.buffer.keys():
+            self.listener
         data = self.buffer[str(self.curr_packet_recv)]
         self.buffer.pop(str(self.curr_packet_recv))
         self.curr_packet_recv +=1
@@ -48,4 +66,6 @@ class Streamer:
         """Cleans up. It should block (wait) until the Streamer is done with all
            the necessary ACKs and retransmissions"""
         # your code goes here, especially after you add ACKs and retransmissions.
-        pass
+        self.closed = True
+        self.socket.stoprecv()
+
